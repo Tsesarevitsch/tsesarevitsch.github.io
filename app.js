@@ -245,11 +245,16 @@
         return (release.episodes || []).filter(hlsUrl).map(function (episode) {
             var label = episode.ordinal + " серия";
             return {
+                id: episode.id,
                 title: label,
                 titleFooter: [episode.name, formatDuration(episode.duration)].filter(Boolean).join(" · "),
                 image: imageUrl(episode.preview),
                 playerLabel: name + " — " + label,
-                action: "video:" + hlsUrl(episode)
+                action: "video:" + hlsUrl(episode),
+                properties: {
+                    "trigger:background": "player:eject", /* no video behind the menus */
+                    "resume:key": "id" /* eject must not lose the position */
+                }
             };
         });
     }
