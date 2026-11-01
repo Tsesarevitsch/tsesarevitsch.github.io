@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.3.0";
+    var VERSION = "1.3.1";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -46,12 +46,16 @@
         return "content:" + request(dataId);
     }
 
+    /* window.localStorage does not persist inside plugins on iOS; MSX's wrapper does. */
     function storageGet(key) {
-        try { return localStorage.getItem(key); } catch (e) { return null; }
+        try { return TVXServices.storage.getFullStr(key, null); } catch (e) { return null; }
     }
 
     function storageSet(key, value) {
-        try { localStorage.setItem(key, value); } catch (e) { /* private mode */ }
+        try {
+            TVXServices.storage.set(key, value);
+            TVXServices.storage.flush();
+        } catch (e) { /* storage unavailable: the choice lasts until restart at most */ }
     }
 
     function quality() {
