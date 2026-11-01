@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.6.0";
+    var VERSION = "1.7.0";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -22,6 +22,8 @@
     var SPEED_KEY = "anilibria.speed";
     var TOKEN_KEY = "anilibria.token";
     var DEVICE_KEY = "anilibria.device";
+    var HISTORY_KEY = "anilibria.history";
+    var HISTORY_SIZE = 60;
     var FAVORITES_PATH = "/accounts/users/me/favorites";
     var SECTIONS = {
         fresh: { label: "Новинки", query: "f[sorting]=FRESH_AT_DESC" },
@@ -236,6 +238,7 @@
             });
         }
         items.push({ icon: "star", label: "Избранное", data: request("favorites:1") });
+        items.push({ icon: "history", label: "История", data: request("history") });
         items.push({ icon: "event", label: "Расписание", data: request("schedule") });
         items.push({ icon: "search", label: "Поиск", data: request("search") });
         items.push({ icon: "account-circle", label: "Аккаунт", data: request("account") });
@@ -279,6 +282,48 @@
                 { icon: "info", label: message, action: "[]" },
                 { icon: "login", label: "Войти в аккаунт", action: open("account") }
             ]
+        };
+    }
+
+    function readHistory() {
+        try {
+            var entries = JSON.parse(storageGet(HISTORY_KEY) || "[]");
+            return Array.isArray(entries) ? entries : [];
+        } catch (e) {
+            return [];
+        }
+    }
+
+    /* Keeps only what a poster needs, newest first, one entry per release. */
+    function remember(release) {
+        var entries = readHistory().filter(function (entry) { return entry.id !== release.id; });
+        entries.unshift({
+            id: release.id,
+            name: { main: release.name.main },
+            year: release.year,
+            type: release.type ? { description: release.type.description } : null,
+            poster: release.poster ? { src: release.poster.src || release.poster.preview } : null
+        });
+        storageSet(HISTORY_KEY, JSON.stringify(entries.slice(0, HISTORY_SIZE)));
+    }
+
+    function history() {
+        var items = readHistory().map(function (release) { return posterItem(release); });
+        if (items.length > 0) {
+            items.push({
+                type: "button",
+                icon: "delete-sweep",
+                label: "Очистить",
+                action: "interaction:commit",
+                data: { action: "history:clear" }
+            });
+        }
+        return {
+            type: "list",
+            cache: false,
+            headline: "История",
+            template: posterTemplate(),
+            items: items.length > 0 ? items : [hintItem("Здесь появятся открытые тайтлы")]
         };
     }
 
@@ -527,6 +572,7 @@
 
     function title(id, callback) {
         get("/anime/releases/" + encodeURIComponent(id), function (release) {
+            remember(release);
             withFavoriteIds(function (ids) { callback(titleContent(release, ids)); });
         }, function (message) {
             callback(errorContent("AniLibria", message));
@@ -729,6 +775,9 @@
                 TVXInteractionPlugin.executeAction("reload:content");
             } else if (action.indexOf("login:") === 0) {
                 login(action.slice(6));
+            } else if (action === "history:clear") {
+                storageSet(HISTORY_KEY, "[]");
+                TVXInteractionPlugin.executeAction("reload:content");
             } else if (action === "logout") {
                 logout();
             } else if (action.indexOf("favorite:") === 0) {
@@ -746,6 +795,8 @@
                 list(parts[1], Number(parts[2]) || 1, callback);
             } else if (parts[0] === "favorites") {
                 favorites(Number(parts[1]) || 1, callback);
+            } else if (dataId === "history") {
+                callback(history());
             } else if (dataId === "account") {
                 account(callback);
             } else if (dataId === "schedule") {
