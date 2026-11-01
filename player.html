@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>AniLibria Player</title>
+    <style>
+        html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+        video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
+    </style>
+    <script src="//msx.benzac.de/js/tvx-plugin.min.js"></script>
+</head>
+<body>
+    <video id="video" playsinline webkit-playsinline preload="auto"></video>
+    <script>
+        /* MSX video plugin: draws the video in landscape even while MSX itself stays in portrait. */
+        (function () {
+            "use strict";
+
+            function param(name) {
+                var match = new RegExp("[?&]" + name + "=([^&]*)").exec(location.search);
+                return match ? decodeURIComponent(match[1]) : "";
+            }
+
+            function layout(video) {
+                var width = window.innerWidth;
+                var height = window.innerHeight;
+                var portrait = height > width;
+                video.style.width = portrait ? height + "px" : "100%";
+                video.style.height = portrait ? width + "px" : "100%";
+                video.style.left = portrait ? (width - height) / 2 + "px" : "0";
+                video.style.top = portrait ? (height - width) / 2 + "px" : "0";
+                var transform = portrait ? "rotate(90deg)" : "none";
+                video.style.transform = transform;
+                video.style.webkitTransform = transform;
+            }
+
+            function Player() {
+                var video = document.getElementById("video");
+                var refit = function () { layout(video); };
+
+                this.init = function () {
+                    window.addEventListener("resize", refit);
+                    refit();
+                    video.addEventListener("waiting", function () { TVXVideoPlugin.startLoading(); });
+                    video.addEventListener("playing", function () { TVXVideoPlugin.stopLoading(); });
+                    video.addEventListener("ended", function () { TVXVideoPlugin.stopPlayback(); });
+                    video.addEventListener("error", function () {
+                        TVXVideoPlugin.stopLoading();
+                        TVXVideoPlugin.error("Не удалось загрузить видео");
+                    });
+                    TVXVideoPlugin.startLoading();
+                    video.src = param("url");
+                    video.load();
+                };
+                this.ready = function () { TVXVideoPlugin.startPlayback(); };
+                this.play = function () {
+                    var result = video.play();
+                    if (result && result["catch"]) {
+                        result["catch"](function () {
+                            TVXVideoPlugin.stopLoading();
+                            TVXVideoPlugin.warn("Нажми кнопку воспроизведения");
+                        });
+                    }
+                };
+                this.pause = function () { video.pause(); };
+                this.stop = function () {
+                    video.pause();
+                    video.removeAttribute("src");
+                    video.load();
+                };
+                this.getDuration = function () { return isFinite(video.duration) ? video.duration : 0; };
+                this.getPosition = function () { return video.currentTime; };
+                this.setPosition = function (position) { video.currentTime = position; };
+                this.setVolume = function (volume) { video.volume = volume / 100; };
+                this.getVolume = function () { return Math.round(video.volume * 100); };
+                this.setMuted = function (muted) { video.muted = muted; };
+                this.isMuted = function () { return video.muted; };
+                this.getSpeed = function () { return video.playbackRate; };
+                this.setSpeed = function (speed) { video.playbackRate = speed; };
+                this.setSize = refit;
+                this.getUpdateData = function () {
+                    return {
+                        position: this.getPosition(),
+                        duration: this.getDuration(),
+                        speed: this.getSpeed()
+                    };
+                };
+            }
+
+            TVXPluginTools.onReady(function () {
+                TVXVideoPlugin.setupPlayer(new Player());
+                TVXVideoPlugin.init();
+            });
+        }());
+    </script>
+</body>
+</html>

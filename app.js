@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.3.1";
+    var VERSION = "1.4.0";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -17,6 +17,7 @@
     var MAX_INPUT = 32;
     var QUALITIES = ["1080", "720", "480"];
     var QUALITY_KEY = "anilibria.quality";
+    var ROTATE_KEY = "anilibria.rotate";
     var SECTIONS = {
         fresh: { label: "Новинки", query: "f[sorting]=FRESH_AT_DESC" },
         top: { label: "Популярное", query: "f[sorting]=RATING_DESC" },
@@ -33,6 +34,7 @@
     var DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
     var pluginUrl = location.href.split(/[?#]/)[0];
+    var playerUrl = pluginUrl.replace(/[^\/]*$/, "player.html");
     var hostIndex = 0;
     var search = { input: "", lang: "ru", results: null, error: null, timer: null, seq: 0 };
 
@@ -246,6 +248,14 @@
         });
     }
 
+    function rotated() {
+        return storageGet(ROTATE_KEY) === "on";
+    }
+
+    function playAction(url) {
+        return rotated() ? "video:plugin:" + playerUrl + "?url=" + encodeURIComponent(url) : "video:" + url;
+    }
+
     function episodeItems(release) {
         var name = release.name.main;
         return (release.episodes || []).filter(hlsUrl).map(function (episode) {
@@ -256,10 +266,14 @@
                 titleFooter: [episode.name, formatDuration(episode.duration)].filter(Boolean).join(" · "),
                 image: imageUrl(episode.preview),
                 playerLabel: name + " — " + label,
-                action: "video:" + hlsUrl(episode),
+                action: playAction(hlsUrl(episode)),
                 properties: {
                     "trigger:background": "player:eject", /* no video behind the menus */
-                    "resume:key": "id" /* eject must not lose the position */
+                    "resume:key": "id", /* eject must not lose the position */
+                    "button:rewind:icon": "replay-10",
+                    "button:rewind:action": "player:seek:-10",
+                    "button:forward:icon": "forward-10",
+                    "button:forward:action": "player:seek:+10"
                 }
             };
         });
@@ -294,32 +308,37 @@
                     truncation: "text"
                 }
             ];
+            /* One-row buttons: an icon field would be drawn over the label, so icons stay inline. */
             if (items.length > 0) {
                 header.push({
                     type: "button",
                     layout: "2,3,3,1",
-                    icon: "play-arrow",
-                    label: "Смотреть",
+                    label: "{ico:play-arrow} Смотреть",
                     action: "playlist:data",
                     data: { template: episodeTemplate(), items: items }
                 });
             } else {
                 header.push({
                     type: "button",
-                    layout: "2,3,6,1",
-                    icon: "warning",
+                    layout: "2,3,3,1",
                     label: release.is_blocked_by_geo || release.is_blocked_by_copyrights
-                        ? "Недоступно: заблокировано" : "Серий пока нет",
+                        ? "{ico:warning} Заблокировано" : "{ico:warning} Серий нет",
                     enable: false
                 });
             }
             header.push({
                 type: "button",
-                layout: items.length > 0 ? "5,3,3,1" : "8,3,4,1",
-                icon: "high-quality",
-                label: quality() + "p",
+                layout: "5,3,3,1",
+                label: "{ico:high-quality} " + quality() + "p",
                 action: "interaction:commit",
                 data: { action: "quality" }
+            });
+            header.push({
+                type: "button",
+                layout: "8,3,4,1",
+                label: "{ico:screen-rotation} Поворот видео: " + (rotated() ? "вкл" : "выкл"),
+                action: "interaction:commit",
+                data: { action: "rotate" }
             });
             callback({
                 type: "list",
@@ -453,6 +472,9 @@
             if (action === "quality") {
                 var next = QUALITIES[(QUALITIES.indexOf(quality()) + 1) % QUALITIES.length];
                 storageSet(QUALITY_KEY, next);
+                TVXInteractionPlugin.executeAction("reload:content");
+            } else if (action === "rotate") {
+                storageSet(ROTATE_KEY, rotated() ? "off" : "on");
                 TVXInteractionPlugin.executeAction("reload:content");
             } else if (action.indexOf("search:") === 0) {
                 handleSearchAction(action);
