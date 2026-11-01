@@ -20,15 +20,19 @@
         top: { label: "Популярное", query: "f[sorting]=RATING_DESC" },
         movies: { label: "Фильмы", query: "f[sorting]=RATING_DESC&f[types]=MOVIE" }
     };
-    var KEYS = {
-        ru: "абвгдеёжзийклмнопрстуфхцчшщъыьэюя123".split(""),
-        en: "abcdefghijklmnopqrstuvwxyz0123456789".split("")
+    var MIN_QUERY = 2;
+    var KEY_ROWS = {
+        ru: ["йцукенгшщзхъ", "фывапролджэё", "ячсмитьбю"],
+        en: ["qwertyuiop", "asdfghjkl", "zxcvbnm"],
+        num: ["1234567890", "-:.!?"]
     };
+    var LAYOUT_NAMES = { ru: "РУС", en: "ENG", num: "123" };
+    var LAYOUT_ORDER = ["ru", "en", "num"];
     var DAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
     var pluginUrl = location.href.split(/[?#]/)[0];
     var hostIndex = 0;
-    var search = { input: "", lang: "ru", results: null, failed: false, timer: null, seq: 0 };
+    var search = { input: "", lang: "ru", results: null, error: null, timer: null, seq: 0 };
 
     /* ---------- helpers ---------- */
 
@@ -325,21 +329,38 @@
         };
     }
 
+    function inputTitle() {
+        return "{ico:search} " + (search.input || "Введите название");
+    }
+
     function keyboard() {
-        var items = KEYS[search.lang].map(function (key, index) {
-            var layout = (index % 12) + "," + Math.floor(index / 12) + ",1,1";
-            return keyItem("key" + index, layout, key, "search:input:" + key);
+        var items = [{
+            id: "input",
+            type: "space",
+            layout: "0,0,12,1",
+            color: "msx-glass",
+            title: inputTitle(),
+            centration: "title"
+        }];
+        KEY_ROWS[search.lang].forEach(function (row, rowIndex) {
+            var left = Math.floor((12 - row.length) / 2);
+            row.split("").forEach(function (key, index) {
+                var layout = (left + index) + "," + (rowIndex + 1) + ",1,1";
+                items.push(keyItem("key" + rowIndex + "_" + index, layout, key, "search:input:" + key));
+            });
         });
-        items.push(keyItem("back", "0,3,3,1", "{ico:backspace}", "search:back"));
-        items.push(keyItem("clear", "3,3,3,1", "{ico:clear}", "search:clear"));
-        items.push(keyItem("space", "6,3,3,1", "{ico:space-bar}", "search:input: "));
-        items.push(keyItem("lang", "9,3,3,1", search.lang === "ru" ? "EN" : "RU", "search:lang"));
+        var next = LAYOUT_ORDER[(LAYOUT_ORDER.indexOf(search.lang) + 1) % LAYOUT_ORDER.length];
+        items.push(keyItem("lang", "0,4,2,1", LAYOUT_NAMES[next], "search:lang"));
+        items.push(keyItem("space", "2,4,6,1", "{ico:space-bar}", "search:input: "));
+        items.push(keyItem("clear", "8,4,2,1", "{ico:clear}", "search:clear"));
+        items.push(keyItem("back", "10,4,2,1", "{ico:backspace}", "search:back"));
         return { items: items };
     }
 
     function searchHint() {
-        if (search.failed) { return "Поиск не сработал, проверь сеть"; }
-        if (!search.input) { return "Введите название"; }
+        if (search.error) { return "Ошибка поиска: " + search.error; }
+        if (!search.input.trim()) { return "Начните вводить название"; }
+        if (search.input.trim().length < MIN_QUERY) { return "Введите ещё хотя бы один символ"; }
         return search.results === null ? "Ищу…" : "Ничего не найдено";
     }
 
@@ -350,8 +371,7 @@
             cache: false,
             flag: "anilibria_search",
             refocus: 1,
-            important: true,
-            headline: "{ico:search} " + (search.input || "Поиск"),
+            headline: "Поиск",
             header: keyboard(),
             template: posterTemplate(),
             items: results.length > 0
@@ -364,22 +384,27 @@
         TVXInteractionPlugin.executeAction("reload:content");
     }
 
+    /* The page is reloaded once per typing burst: overlapping reloads make MSX report errors. */
     function runSearch() {
         var seq = ++search.seq;
         var query = search.input.trim();
         clearTimeout(search.timer);
-        search.results = null;
-        search.failed = false;
-        refreshSearch();
-        if (!query) { return; }
+        TVXInteractionPlugin.executeAction("update:content:input", { title: inputTitle() });
         search.timer = setTimeout(function () {
+            search.error = null;
+            if (query.length < MIN_QUERY) {
+                search.results = null;
+                refreshSearch();
+                return;
+            }
             get("/app/search/releases?query=" + encodeURIComponent(query), function (data) {
                 if (seq !== search.seq) { return; }
                 search.results = data;
                 refreshSearch();
-            }, function () {
+            }, function (message) {
                 if (seq !== search.seq) { return; }
-                search.failed = true;
+                search.results = null;
+                search.error = message;
                 refreshSearch();
             });
         }, SEARCH_DELAY_MS);
@@ -396,7 +421,7 @@
         } else if (action === "search:clear") {
             search.input = "";
         } else if (action === "search:lang") {
-            search.lang = search.lang === "ru" ? "en" : "ru";
+            search.lang = LAYOUT_ORDER[(LAYOUT_ORDER.indexOf(search.lang) + 1) % LAYOUT_ORDER.length];
             refreshSearch();
             return;
         }
