@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.7.0";
+    var VERSION = "1.7.1";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -509,7 +509,7 @@
     }
 
     function rotated() {
-        return storageGet(ROTATE_KEY) === "on";
+        return storageGet(ROTATE_KEY) !== "off"; /* landscape video by default */
     }
 
     function playAction(url) {
