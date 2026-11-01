@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.5.0";
+    var VERSION = "1.6.0";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -20,6 +20,9 @@
     var ROTATE_KEY = "anilibria.rotate";
     var SPEEDS = ["1", "1.25", "1.5", "1.75", "2"];
     var SPEED_KEY = "anilibria.speed";
+    var TOKEN_KEY = "anilibria.token";
+    var DEVICE_KEY = "anilibria.device";
+    var FAVORITES_PATH = "/accounts/users/me/favorites";
     var SECTIONS = {
         fresh: { label: "Новинки", query: "f[sorting]=FRESH_AT_DESC" },
         top: { label: "Популярное", query: "f[sorting]=RATING_DESC" },
@@ -96,42 +99,88 @@
         return seconds > 0 ? Math.round(seconds / 60) + " мин" : "";
     }
 
-    function get(path, done, fail, attempt) {
+    function token() {
+        return storageGet(TOKEN_KEY) || "";
+    }
+
+    function setToken(value) {
+        storageSet(TOKEN_KEY, value);
+    }
+
+    function deviceId() {
+        var id = storageGet(DEVICE_KEY);
+        if (!id) {
+            id = "msx-" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+            storageSet(DEVICE_KEY, id);
+        }
+        return id;
+    }
+
+    function formBody(fields) {
+        return Object.keys(fields).map(function (key) {
+            return encodeURIComponent(key) + "=" + encodeURIComponent(fields[key]);
+        }).join("&");
+    }
+
+    /* options: auth (send the session token), form (fields) or json (body).
+       Form bodies need no CORS preflight, so code login works even if preflight is refused.
+       fail(message, status): status is 0 when no HTTP response was received. */
+    function send(method, path, options, done, fail, attempt) {
         attempt = attempt || 0;
         var index = (hostIndex + attempt) % HOSTS.length;
         var xhr = new XMLHttpRequest();
-        var retry = function (message) {
-            if (attempt + 1 < HOSTS.length) {
-                get(path, done, fail, attempt + 1);
+        var body = null;
+        var retry = function (message, status) {
+            if (method === "GET" && attempt + 1 < HOSTS.length) {
+                send(method, path, options, done, fail, attempt + 1);
             } else {
-                fail(message);
+                fail(message, status);
             }
         };
-        xhr.open("GET", HOSTS[index] + API_PATH + path);
+        xhr.open(method, HOSTS[index] + API_PATH + path);
         xhr.timeout = TIMEOUT_MS;
         xhr.setRequestHeader("Accept", "application/json");
+        if (options.auth) {
+            xhr.setRequestHeader("Authorization", "Bearer " + token());
+        }
+        if (options.form) {
+            xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+            body = formBody(options.form);
+        } else if (options.json) {
+            xhr.setRequestHeader("Content-Type", "application/json");
+            body = JSON.stringify(options.json);
+        }
         xhr.onload = function () {
-            if (xhr.status === 404 || xhr.status === 422) {
-                fail("API ответил " + xhr.status);
+            if (xhr.status === 403 && options.auth) {
+                setToken("");
+                fail("Вход устарел, войди заново", 403);
+                return;
+            }
+            if (xhr.status === 404 || xhr.status === 422 || (method !== "GET" && xhr.status !== 200)) {
+                fail("API ответил " + xhr.status, xhr.status);
                 return;
             }
             if (xhr.status !== 200) {
-                retry("API ответил " + xhr.status);
+                retry("API ответил " + xhr.status, xhr.status);
                 return;
             }
-            var data;
+            var data = null;
             try {
-                data = JSON.parse(xhr.responseText);
+                data = xhr.responseText ? JSON.parse(xhr.responseText) : null;
             } catch (e) {
-                retry("API вернул не JSON");
+                retry("API вернул не JSON", xhr.status);
                 return;
             }
             hostIndex = index;
             done(data);
         };
-        xhr.onerror = function () { retry("Нет доступа к API (сеть или CORS)"); };
-        xhr.ontimeout = function () { retry("API не ответил вовремя"); };
-        xhr.send();
+        xhr.onerror = function () { retry("Нет доступа к API (сеть или CORS)", 0); };
+        xhr.ontimeout = function () { retry("API не ответил вовремя", 0); };
+        xhr.send(body);
+    }
+
+    function get(path, done, fail) {
+        send("GET", path, {}, done, fail);
     }
 
     /* ---------- content builders ---------- */
@@ -186,8 +235,10 @@
                 data: request("list:" + id + ":1")
             });
         }
+        items.push({ icon: "star", label: "Избранное", data: request("favorites:1") });
         items.push({ icon: "event", label: "Расписание", data: request("schedule") });
         items.push({ icon: "search", label: "Поиск", data: request("search") });
+        items.push({ icon: "account-circle", label: "Аккаунт", data: request("account") });
         return { name: "AniLibria", version: VERSION, headline: "AniLibria", extension: "v" + VERSION, menu: items };
     }
 
@@ -215,6 +266,150 @@
             });
         }, function (message) {
             callback(errorContent(config.label, message));
+        });
+    }
+
+    function loginContent(headline, message) {
+        return {
+            type: "list",
+            cache: false,
+            headline: headline,
+            template: { type: "control", layout: "0,0,12,1", enumerate: false },
+            items: [
+                { icon: "info", label: message, action: "[]" },
+                { icon: "login", label: "Войти в аккаунт", action: open("account") }
+            ]
+        };
+    }
+
+    function favorites(page, callback) {
+        if (!token()) {
+            callback(loginContent("Избранное", "Избранное доступно после входа"));
+            return;
+        }
+        send("GET", FAVORITES_PATH + "/releases?limit=" + PAGE_SIZE + "&page=" + page, { auth: true }, function (data) {
+            var pagination = (data.meta && data.meta.pagination) || {};
+            var items = (data.data || []).map(function (release) { return posterItem(release); });
+            if (pagination.current_page < pagination.total_pages) {
+                items.push({
+                    type: "button",
+                    icon: "arrow-forward",
+                    label: "Страница " + (page + 1),
+                    action: open("favorites:" + (page + 1))
+                });
+            }
+            callback({
+                type: "list",
+                cache: false,
+                headline: "Избранное" + (page > 1 ? " · страница " + page : ""),
+                template: posterTemplate(),
+                items: items.length > 0 ? items : [hintItem("В избранном пока пусто")]
+            });
+        }, function (message, status) {
+            callback(status === 403 ? loginContent("Избранное", message) : errorContent("Избранное", message));
+        });
+    }
+
+    function accountPage(items) {
+        return { type: "list", cache: false, headline: "Аккаунт", pages: [{ items: items }] };
+    }
+
+    function accountButton(layout, label, action, data) {
+        return { type: "button", layout: layout, label: label, action: action, data: data };
+    }
+
+    function account(callback) {
+        if (token()) {
+            send("GET", "/accounts/users/me/profile", { auth: true }, function (profile) {
+                callback(accountPage([
+                    {
+                        type: "default",
+                        layout: "0,0,12,2",
+                        color: "msx-glass",
+                        headline: "Вы вошли как",
+                        title: (profile && (profile.nickname || profile.login)) || "пользователь",
+                        action: "[]"
+                    },
+                    accountButton("0,2,4,1", "{ico:star} Избранное", open("favorites:1")),
+                    accountButton("4,2,4,1", "{ico:logout} Выйти", "interaction:commit", { action: "logout" })
+                ]));
+            }, function (message, status) {
+                if (status === 403) {
+                    account(callback);
+                } else {
+                    callback(errorContent("Аккаунт", message));
+                }
+            });
+            return;
+        }
+        send("POST", "/accounts/otp/get", { form: { device_id: deviceId() } }, function (data) {
+            var code = data && data.otp && data.otp.code;
+            if (!code) {
+                callback(errorContent("Аккаунт", "API не выдал код"));
+                return;
+            }
+            callback(accountPage([
+                {
+                    type: "default",
+                    layout: "0,0,12,2",
+                    color: "msx-glass",
+                    headline: "Код для входа (действует 5 минут)",
+                    title: code,
+                    action: "[]"
+                },
+                {
+                    type: "space",
+                    layout: "0,2,12,1",
+                    text: "Введи код на сайте или в приложении AniLibria, где ты уже вошёл, затем нажми «Я подтвердил»."
+                },
+                accountButton("0,3,4,1", "{ico:check} Я подтвердил", "interaction:commit", { action: "login:" + code }),
+                accountButton("4,3,4,1", "{ico:open-in-new} Открыть сайт", "link:window:" + SITE),
+                accountButton("8,3,4,1", "{ico:refresh} Новый код", "reload:content")
+            ]));
+        }, function (message) {
+            callback(errorContent("Аккаунт", message));
+        });
+    }
+
+    function login(code) {
+        send("POST", "/accounts/otp/login", { form: { code: code, device_id: deviceId() } }, function (data) {
+            if (!data || !data.token) {
+                TVXInteractionPlugin.error("API не выдал вход");
+                return;
+            }
+            setToken(data.token);
+            TVXInteractionPlugin.success("Вход выполнен");
+            TVXInteractionPlugin.executeAction("reload:content");
+        }, function (message, status) {
+            if (status === 500) {
+                TVXInteractionPlugin.warn("Код ещё не подтверждён");
+            } else if (status === 404) {
+                TVXInteractionPlugin.warn("Код устарел, получи новый");
+                TVXInteractionPlugin.executeAction("reload:content");
+            } else {
+                TVXInteractionPlugin.error(message);
+            }
+        });
+    }
+
+    function logout() {
+        var finish = function () {
+            setToken("");
+            TVXInteractionPlugin.executeAction("reload:content");
+        };
+        send("POST", "/accounts/users/auth/logout", { auth: true }, finish, finish);
+    }
+
+    function toggleFavorite(action) {
+        var parts = action.split(":");
+        send(parts[1] === "add" ? "POST" : "DELETE", FAVORITES_PATH, {
+            auth: true,
+            json: [{ release_id: Number(parts[2]) }]
+        }, function () {
+            TVXInteractionPlugin.executeAction("reload:content");
+        }, function (message) {
+            TVXInteractionPlugin.error(message);
+            TVXInteractionPlugin.executeAction("reload:content");
         });
     }
 
@@ -302,8 +497,43 @@
         };
     }
 
+    function favoriteButton(release, ids) {
+        var button = { type: "button", layout: "7,2,5,1", label: "{ico:star-border} В избранное" };
+        if (!token()) {
+            button.action = open("account");
+        } else if (ids.indexOf(release.id) >= 0) {
+            button.label = "{ico:star} В избранном";
+            button.action = "interaction:commit";
+            button.data = { action: "favorite:remove:" + release.id };
+        } else {
+            button.action = "interaction:commit";
+            button.data = { action: "favorite:add:" + release.id };
+        }
+        return button;
+    }
+
+    /* Favorite state is optional: without it the title page must still open. */
+    function withFavoriteIds(next) {
+        if (!token()) {
+            next([]);
+            return;
+        }
+        send("GET", FAVORITES_PATH + "/ids", { auth: true }, function (ids) {
+            next(ids || []);
+        }, function () {
+            next([]);
+        });
+    }
+
     function title(id, callback) {
         get("/anime/releases/" + encodeURIComponent(id), function (release) {
+            withFavoriteIds(function (ids) { callback(titleContent(release, ids)); });
+        }, function (message) {
+            callback(errorContent("AniLibria", message));
+        });
+    }
+
+    function titleContent(release, ids) {
             var items = episodeItems(release);
             var facts = [
                 release.year,
@@ -315,7 +545,7 @@
                 { type: "space", layout: "0,0,2,4", image: imageUrl(release.poster), imageFiller: "cover" },
                 {
                     type: "space",
-                    layout: "2,0,10,3",
+                    layout: "2,0,10,2",
                     headline: release.name.main,
                     text: [facts, "{br}", clip(release.description, 420)],
                     truncation: "text"
@@ -325,7 +555,7 @@
             if (items.length > 0) {
                 header.push({
                     type: "button",
-                    layout: "2,3,3,1",
+                    layout: "2,2,5,1",
                     label: "{ico:play-arrow} Смотреть",
                     action: "playlist:data",
                     data: { template: episodeTemplate(), items: items }
@@ -333,44 +563,42 @@
             } else {
                 header.push({
                     type: "button",
-                    layout: "2,3,3,1",
+                    layout: "2,2,5,1",
                     label: release.is_blocked_by_geo || release.is_blocked_by_copyrights
                         ? "{ico:warning} Заблокировано" : "{ico:warning} Серий нет",
                     enable: false
                 });
             }
+            header.push(favoriteButton(release, ids));
             header.push({
                 type: "button",
-                layout: "5,3,2,1",
+                layout: "2,3,3,1",
                 label: "{ico:high-quality} " + quality() + "p",
                 action: "interaction:commit",
                 data: { action: "quality" }
             });
             header.push({
                 type: "button",
-                layout: "7,3,2,1",
+                layout: "5,3,3,1",
                 label: "{ico:speed} " + speed() + "x",
                 action: "interaction:commit",
                 data: { action: "speed" }
             });
             header.push({
                 type: "button",
-                layout: "9,3,3,1",
+                layout: "8,3,4,1",
                 label: "{ico:screen-rotation} Поворот: " + (rotated() ? "вкл" : "выкл"),
                 action: "interaction:commit",
                 data: { action: "rotate" }
             });
-            callback({
+            return {
                 type: "list",
                 cache: false,
                 headline: release.name.main,
                 header: { items: header },
                 template: episodeTemplate(),
                 items: items.length > 0 ? items : [hintItem("Серии недоступны")]
-            });
-        }, function (message) {
-            callback(errorContent("AniLibria", message));
-        });
+            };
     }
 
     function keyItem(id, layout, label, action) {
@@ -499,6 +727,12 @@
             } else if (action === "rotate") {
                 storageSet(ROTATE_KEY, rotated() ? "off" : "on");
                 TVXInteractionPlugin.executeAction("reload:content");
+            } else if (action.indexOf("login:") === 0) {
+                login(action.slice(6));
+            } else if (action === "logout") {
+                logout();
+            } else if (action.indexOf("favorite:") === 0) {
+                toggleFavorite(action);
             } else if (action.indexOf("search:") === 0) {
                 handleSearchAction(action);
             }
@@ -510,6 +744,10 @@
                 callback(menu());
             } else if (parts[0] === "list" && SECTIONS[parts[1]]) {
                 list(parts[1], Number(parts[2]) || 1, callback);
+            } else if (parts[0] === "favorites") {
+                favorites(Number(parts[1]) || 1, callback);
+            } else if (dataId === "account") {
+                account(callback);
             } else if (dataId === "schedule") {
                 schedule(callback);
             } else if (dataId === "search") {
