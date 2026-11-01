@@ -6,6 +6,8 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
+    var VERSION = "1.3.0";
+
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
     var API_PATH = "/api/v1";
@@ -178,7 +180,7 @@
         }
         items.push({ icon: "event", label: "Расписание", data: request("schedule") });
         items.push({ icon: "search", label: "Поиск", data: request("search") });
-        return { name: "AniLibria", version: "1.0.0", headline: "AniLibria", menu: items };
+        return { name: "AniLibria", version: VERSION, headline: "AniLibria", extension: "v" + VERSION, menu: items };
     }
 
     function list(section, page, callback) {
