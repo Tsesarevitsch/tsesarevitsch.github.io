@@ -162,6 +162,11 @@
         return item;
     }
 
+    /* MSX rejects a page without selectable items, so a lone hint stays enabled with a no-op action. */
+    function hintItem(text) {
+        return { type: "default", title: text, enumerate: false, action: "[]" };
+    }
+
     function menu() {
         var items = [];
         for (var id in SECTIONS) {
@@ -311,7 +316,7 @@
                 headline: release.name.main,
                 header: { items: header },
                 template: episodeTemplate(),
-                items: items.length > 0 ? items : [{ type: "space", enable: false }]
+                items: items.length > 0 ? items : [hintItem("Серии недоступны")]
             });
         }, function (message) {
             callback(errorContent("AniLibria", message));
@@ -376,7 +381,7 @@
             template: posterTemplate(),
             items: results.length > 0
                 ? results.map(function (release) { return posterItem(release); })
-                : [{ type: "default", layout: "0,0,12,1", title: searchHint(), enable: false }]
+                : [hintItem(searchHint())]
         };
     }
 
