@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.4.0";
+    var VERSION = "1.5.0";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -18,6 +18,8 @@
     var QUALITIES = ["1080", "720", "480"];
     var QUALITY_KEY = "anilibria.quality";
     var ROTATE_KEY = "anilibria.rotate";
+    var SPEEDS = ["1", "1.25", "1.5", "1.75", "2"];
+    var SPEED_KEY = "anilibria.speed";
     var SECTIONS = {
         fresh: { label: "Новинки", query: "f[sorting]=FRESH_AT_DESC" },
         top: { label: "Популярное", query: "f[sorting]=RATING_DESC" },
@@ -248,6 +250,24 @@
         });
     }
 
+    function speed() {
+        var stored = storageGet(SPEED_KEY);
+        return SPEEDS.indexOf(stored) >= 0 ? stored : "1";
+    }
+
+    function playerProperties() {
+        var properties = {
+            "trigger:background": "player:eject", /* no video behind the menus */
+            "resume:key": "id", /* eject must not lose the position */
+            "button:rewind:icon": "replay-10",
+            "button:rewind:action": "player:seek:-10",
+            "button:forward:icon": "forward-10",
+            "button:forward:action": "player:seek:+10"
+        };
+        if (speed() !== "1") { properties["trigger:start"] = "player:speed:set:" + speed(); }
+        return properties;
+    }
+
     function rotated() {
         return storageGet(ROTATE_KEY) === "on";
     }
@@ -267,14 +287,7 @@
                 image: imageUrl(episode.preview),
                 playerLabel: name + " — " + label,
                 action: playAction(hlsUrl(episode)),
-                properties: {
-                    "trigger:background": "player:eject", /* no video behind the menus */
-                    "resume:key": "id", /* eject must not lose the position */
-                    "button:rewind:icon": "replay-10",
-                    "button:rewind:action": "player:seek:-10",
-                    "button:forward:icon": "forward-10",
-                    "button:forward:action": "player:seek:+10"
-                }
+                properties: playerProperties()
             };
         });
     }
@@ -328,15 +341,22 @@
             }
             header.push({
                 type: "button",
-                layout: "5,3,3,1",
+                layout: "5,3,2,1",
                 label: "{ico:high-quality} " + quality() + "p",
                 action: "interaction:commit",
                 data: { action: "quality" }
             });
             header.push({
                 type: "button",
-                layout: "8,3,4,1",
-                label: "{ico:screen-rotation} Поворот видео: " + (rotated() ? "вкл" : "выкл"),
+                layout: "7,3,2,1",
+                label: "{ico:speed} " + speed() + "x",
+                action: "interaction:commit",
+                data: { action: "speed" }
+            });
+            header.push({
+                type: "button",
+                layout: "9,3,3,1",
+                label: "{ico:screen-rotation} Поворот: " + (rotated() ? "вкл" : "выкл"),
                 action: "interaction:commit",
                 data: { action: "rotate" }
             });
@@ -472,6 +492,9 @@
             if (action === "quality") {
                 var next = QUALITIES[(QUALITIES.indexOf(quality()) + 1) % QUALITIES.length];
                 storageSet(QUALITY_KEY, next);
+                TVXInteractionPlugin.executeAction("reload:content");
+            } else if (action === "speed") {
+                storageSet(SPEED_KEY, SPEEDS[(SPEEDS.indexOf(speed()) + 1) % SPEEDS.length]);
                 TVXInteractionPlugin.executeAction("reload:content");
             } else if (action === "rotate") {
                 storageSet(ROTATE_KEY, rotated() ? "off" : "on");
