@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.9.1";
+    var VERSION = "1.9.2";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -46,7 +46,7 @@
     var pluginUrl = location.href.split(/[?#]/)[0];
     var playerUrl = pluginUrl.replace(/[^\/]*$/, "player.html");
     var hostIndex = 0;
-    var zones = { visible: false, side: 0, time: 0 };
+    var zones = { visible: false, side: null, time: 0, timer: null };
     var search = { input: "", lang: "ru", results: null, error: null, timer: null, seq: 0 };
 
     /* ---------- helpers ---------- */
@@ -536,15 +536,15 @@
         var rows = rotated() && window.innerHeight > window.innerWidth;
         var layouts = rows ? ["0,0,12,2", "0,2,12,2", "0,4,12,2"] : ["0,0,4,6", "4,0,4,6", "8,0,4,6"];
         var zone = function (layout, side) {
-            var item = { type: "default", layout: layout, color: ZONE_COLOR, enumerate: false };
-            if (side === 0) {
-                item.action = "back";
-            } else {
-                /* The focus frame cannot be hidden, so it is sent to a tiny item after each tap. */
-                item.action = "[focus:zone_park|interaction:commit]";
-                item.data = { action: "zone:" + side };
-            }
-            return item;
+            /* The focus frame cannot be hidden, so it is sent to a tiny item after each tap. */
+            return {
+                type: "default",
+                layout: layout,
+                color: ZONE_COLOR,
+                enumerate: false,
+                action: "[focus:zone_park|interaction:commit]",
+                data: { action: "zone:" + side }
+            };
         };
         var park = {
             id: "zone_park",
@@ -581,8 +581,18 @@
         var isDouble = side === zones.side && now - zones.time < ZONE_DOUBLE_MS;
         zones.side = side;
         zones.time = isDouble ? 0 : now;
-        if (isDouble) {
-            TVXInteractionPlugin.executeAction("player:seek:" + (side > 0 ? "+10" : "-10"));
+        clearTimeout(zones.timer);
+        if (side !== 0) {
+            if (isDouble) {
+                TVXInteractionPlugin.executeAction("player:seek:" + (side > 0 ? "+10" : "-10"));
+            }
+        } else if (isDouble) {
+            TVXInteractionPlugin.executeAction("back"); /* returns to the player with its controls */
+        } else {
+            /* Pausing waits for the double-tap window, otherwise a double tap would also pause. */
+            zones.timer = setTimeout(function () {
+                TVXInteractionPlugin.executeAction("player:play_pause");
+            }, ZONE_DOUBLE_MS);
         }
     }
 
