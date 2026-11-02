@@ -6,15 +6,24 @@
     <style>
         html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
         video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
+        #hint {
+            position: absolute; left: 50%; top: 50%; width: 120px; height: 44px; margin: -22px 0 0 -60px;
+            border-radius: 22px; background: rgba(0, 0, 0, .6); color: #fff;
+            font: 600 18px/44px -apple-system, sans-serif; text-align: center; display: none;
+        }
     </style>
     <script src="//msx.benzac.de/js/tvx-plugin.min.js"></script>
 </head>
 <body>
     <video id="video" playsinline webkit-playsinline preload="auto"></video>
+    <div id="hint"></div>
     <script>
         /* MSX video plugin: draws the video in landscape even while MSX itself stays in portrait. */
         (function () {
             "use strict";
+
+            var SKIP_SECONDS = 10;
+            var DOUBLE_TAP_MS = 350;
 
             function param(name) {
                 var match = new RegExp("[?&]" + name + "=([^&]*)").exec(location.search);
@@ -32,6 +41,36 @@
                 var transform = portrait ? "rotate(90deg)" : "none";
                 video.style.transform = transform;
                 video.style.webkitTransform = transform;
+                var hint = document.getElementById("hint");
+                hint.style.transform = transform;
+                hint.style.webkitTransform = transform;
+            }
+
+            /* Double tap: left part of the picture back, right part forward. In portrait the
+               picture is turned clockwise, so its left edge is at the top of the screen.
+               MSX may keep touches to itself; then this simply never fires. */
+            function setupDoubleTap(video) {
+                var hint = document.getElementById("hint");
+                var hideTimer = null;
+                var lastTime = 0;
+                var lastSide = 0;
+                document.addEventListener("touchend", function (event) {
+                    var touch = event.changedTouches && event.changedTouches[0];
+                    if (!touch) { return; }
+                    var portrait = window.innerHeight > window.innerWidth;
+                    var ratio = portrait ? touch.clientY / window.innerHeight : touch.clientX / window.innerWidth;
+                    var side = ratio < 0.4 ? -1 : (ratio > 0.6 ? 1 : 0);
+                    var now = Date.now();
+                    var isDouble = side !== 0 && side === lastSide && now - lastTime < DOUBLE_TAP_MS;
+                    lastTime = isDouble ? 0 : now;
+                    lastSide = side;
+                    if (!isDouble) { return; }
+                    video.currentTime = Math.max(0, video.currentTime + side * SKIP_SECONDS);
+                    hint.textContent = (side > 0 ? "+" : "−") + SKIP_SECONDS + " сек";
+                    hint.style.display = "block";
+                    clearTimeout(hideTimer);
+                    hideTimer = setTimeout(function () { hint.style.display = "none"; }, 700);
+                });
             }
 
             function Player() {
@@ -41,6 +80,7 @@
                 this.init = function () {
                     window.addEventListener("resize", refit);
                     refit();
+                    setupDoubleTap(video);
                     video.addEventListener("waiting", function () { TVXVideoPlugin.startLoading(); });
                     video.addEventListener("playing", function () { TVXVideoPlugin.stopLoading(); });
                     video.addEventListener("ended", function () { TVXVideoPlugin.stopPlayback(); });

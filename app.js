@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.7.1";
+    var VERSION = "1.8.0";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -18,7 +18,7 @@
     var QUALITIES = ["1080", "720", "480"];
     var QUALITY_KEY = "anilibria.quality";
     var ROTATE_KEY = "anilibria.rotate";
-    var SPEEDS = ["1", "1.25", "1.5", "1.75", "2"];
+    var SPEEDS = ["1", "1.25", "1.5", "1.75", "2", "2.5", "3"];
     var SPEED_KEY = "anilibria.speed";
     var TOKEN_KEY = "anilibria.token";
     var DEVICE_KEY = "anilibria.device";
@@ -296,9 +296,11 @@
 
     /* Keeps only what a poster needs, newest first, one entry per release. */
     function remember(release) {
+        var previous = historyEntry(release.id);
         var entries = readHistory().filter(function (entry) { return entry.id !== release.id; });
         entries.unshift({
             id: release.id,
+            last: previous && previous.last,
             name: { main: release.name.main },
             year: release.year,
             type: release.type ? { description: release.type.description } : null,
@@ -308,7 +310,9 @@
     }
 
     function history() {
-        var items = readHistory().map(function (release) { return posterItem(release); });
+        var items = readHistory().map(function (release) {
+            return posterItem(release, release.last ? { titleFooter: release.last.ordinal + " серия" } : null);
+        });
         if (items.length > 0) {
             items.push({
                 type: "button",
@@ -495,17 +499,19 @@
         return SPEEDS.indexOf(stored) >= 0 ? stored : "1";
     }
 
-    function playerProperties() {
-        var properties = {
-            "trigger:background": "player:eject", /* no video behind the menus */
+    function playerProperties(release, episode) {
+        var onStart = ["interaction:commit:message:watch:" + release.id + ":" + episode.id + ":" + episode.ordinal];
+        if (speed() !== "1") { onStart.unshift("player:speed:set:" + speed()); }
+        return {
+            "trigger:start": "[" + onStart.join("|") + "]",
+            /* no video behind the menus; the reload shows the new last episode */
+            "trigger:background": "[player:eject|reload:content]",
             "resume:key": "id", /* eject must not lose the position */
             "button:rewind:icon": "replay-10",
             "button:rewind:action": "player:seek:-10",
             "button:forward:icon": "forward-10",
             "button:forward:action": "player:seek:+10"
         };
-        if (speed() !== "1") { properties["trigger:start"] = "player:speed:set:" + speed(); }
-        return properties;
     }
 
     function rotated() {
@@ -516,18 +522,34 @@
         return rotated() ? "video:plugin:" + playerUrl + "?url=" + encodeURIComponent(url) : "video:" + url;
     }
 
+    function historyEntry(id) {
+        return readHistory().filter(function (entry) { return String(entry.id) === String(id); })[0] || null;
+    }
+
+    function markWatched(releaseId, episodeId, ordinal) {
+        var entries = readHistory();
+        entries.forEach(function (entry) {
+            if (String(entry.id) === releaseId) { entry.last = { id: episodeId, ordinal: ordinal }; }
+        });
+        storageSet(HISTORY_KEY, JSON.stringify(entries));
+    }
+
     function episodeItems(release) {
         var name = release.name.main;
+        var entry = historyEntry(release.id);
+        var last = entry && entry.last;
         return (release.episodes || []).filter(hlsUrl).map(function (episode) {
             var label = episode.ordinal + " серия";
             return {
                 id: episode.id,
+                badge: last && last.id === episode.id ? "Последняя" : null,
+                badgeColor: "msx-red",
                 title: label,
                 titleFooter: [episode.name, formatDuration(episode.duration)].filter(Boolean).join(" · "),
-                image: imageUrl(episode.preview),
+                image: imageUrl(episode.preview) || imageUrl(release.poster),
                 playerLabel: name + " — " + label,
                 action: playAction(hlsUrl(episode)),
-                properties: playerProperties()
+                properties: playerProperties(release, episode)
             };
         });
     }
@@ -581,6 +603,11 @@
 
     function titleContent(release, ids) {
             var items = episodeItems(release);
+            var entry = historyEntry(release.id);
+            var lastIndex = -1;
+            items.forEach(function (item, index) {
+                if (entry && entry.last && item.id === entry.last.id) { lastIndex = index; }
+            });
             var facts = [
                 release.year,
                 release.type && release.type.description,
@@ -602,9 +629,11 @@
                 header.push({
                     type: "button",
                     layout: "2,2,5,1",
-                    label: "{ico:play-arrow} Смотреть",
+                    label: lastIndex >= 0
+                        ? "{ico:play-arrow} Продолжить: " + entry.last.ordinal + " серия"
+                        : "{ico:play-arrow} Смотреть",
                     action: "playlist:data",
-                    data: { template: episodeTemplate(), items: items }
+                    data: { template: episodeTemplate(), items: items.slice(Math.max(lastIndex, 0)) }
                 });
             } else {
                 header.push({
@@ -761,6 +790,11 @@
 
     function Handler() {
         this.handleData = function (data) {
+            if (data && typeof data.message === "string" && data.message.indexOf("watch:") === 0) {
+                var parts = data.message.split(":");
+                markWatched(parts[1], parts[2], parts[3]);
+                return;
+            }
             var action = data && data.data && data.data.action;
             if (!action) { return; }
             if (action === "quality") {
