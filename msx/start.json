@@ -1,5 +1,5 @@
 {
     "name": "AniLibria",
-    "version": "1.9.2",
+    "version": "1.9.3",
     "parameter": "menu:request:interaction:menu@{PREFIX}{SERVER}/plugin.html"
 }

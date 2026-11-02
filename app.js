@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.9.2";
+    var VERSION = "1.9.3";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -519,6 +519,7 @@
             onStart.push("interaction:commit:message:zones:open");
             properties["trigger:background"] = "interaction:commit:message:zones:background";
             properties["trigger:foreground"] = "interaction:commit:message:zones:foreground";
+            properties["trigger:play"] = "interaction:commit:message:zones:open";
             properties["button:content:icon"] = "touch-app";
             properties["button:content:action"] = "interaction:commit:message:zones:open";
         }
@@ -582,18 +583,20 @@
         zones.side = side;
         zones.time = isDouble ? 0 : now;
         clearTimeout(zones.timer);
-        if (side !== 0) {
-            if (isDouble) {
-                TVXInteractionPlugin.executeAction("player:seek:" + (side > 0 ? "+10" : "-10"));
-            }
+        if (side === 0) {
+            showPlayerPanel();
         } else if (isDouble) {
-            TVXInteractionPlugin.executeAction("back"); /* returns to the player with its controls */
+            TVXInteractionPlugin.executeAction("player:seek:" + (side > 0 ? "+10" : "-10"));
         } else {
-            /* Pausing waits for the double-tap window, otherwise a double tap would also pause. */
-            zones.timer = setTimeout(function () {
-                TVXInteractionPlugin.executeAction("player:play_pause");
-            }, ZONE_DOUBLE_MS);
+            /* A single edge tap waits for the double-tap window, which would skip instead. */
+            zones.timer = setTimeout(showPlayerPanel, ZONE_DOUBLE_MS);
         }
+    }
+
+    /* "back" would leave for the title page; "playback" closes the zones and stays on the video.
+       The pause keeps the panel open, and resuming brings the zones back via trigger:play. */
+    function showPlayerPanel() {
+        TVXInteractionPlugin.executeAction("[player:pause|playback|player:show]");
     }
 
     function rotated() {
