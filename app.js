@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.8.0";
+    var VERSION = "1.9.0";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -18,6 +18,8 @@
     var QUALITIES = ["1080", "720", "480"];
     var QUALITY_KEY = "anilibria.quality";
     var ROTATE_KEY = "anilibria.rotate";
+    var ZONES_KEY = "anilibria.zones";
+    var ZONE_DOUBLE_MS = 450;
     var SPEEDS = ["1", "1.25", "1.5", "1.75", "2", "2.5", "3"];
     var SPEED_KEY = "anilibria.speed";
     var TOKEN_KEY = "anilibria.token";
@@ -43,6 +45,7 @@
     var pluginUrl = location.href.split(/[?#]/)[0];
     var playerUrl = pluginUrl.replace(/[^\/]*$/, "player.html");
     var hostIndex = 0;
+    var zones = { visible: false, side: 0, time: 0 };
     var search = { input: "", lang: "ru", results: null, error: null, timer: null, seq: 0 };
 
     /* ---------- helpers ---------- */
@@ -502,8 +505,7 @@
     function playerProperties(release, episode) {
         var onStart = ["interaction:commit:message:watch:" + release.id + ":" + episode.id + ":" + episode.ordinal];
         if (speed() !== "1") { onStart.unshift("player:speed:set:" + speed()); }
-        return {
-            "trigger:start": "[" + onStart.join("|") + "]",
+        var properties = {
             /* no video behind the menus; the reload shows the new last episode */
             "trigger:background": "[player:eject|reload:content]",
             "resume:key": "id", /* eject must not lose the position */
@@ -512,6 +514,65 @@
             "button:forward:icon": "forward-10",
             "button:forward:action": "player:seek:+10"
         };
+        if (zonesEnabled()) {
+            onStart.push("interaction:commit:message:zones:open");
+            properties["trigger:background"] = "interaction:commit:message:zones:background";
+            properties["trigger:foreground"] = "interaction:commit:message:zones:foreground";
+            properties["button:content:icon"] = "touch-app";
+            properties["button:content:action"] = "interaction:commit:message:zones:open";
+        }
+        properties["trigger:start"] = "[" + onStart.join("|") + "]";
+        return properties;
+    }
+
+    function zonesEnabled() {
+        return storageGet(ZONES_KEY) === "on";
+    }
+
+    /* Invisible page above the video: MSX reports taps on its own items, unlike taps on a plugin.
+       On a rotated picture the left edge is at the top, so the zones become rows. */
+    function zonesContent() {
+        var rows = rotated() && window.innerHeight > window.innerWidth;
+        var layouts = rows ? ["0,0,12,2", "0,2,12,2", "0,4,12,2"] : ["0,0,4,6", "4,0,4,6", "8,0,4,6"];
+        var zone = function (layout, side) {
+            return side === 0
+                ? { type: "default", layout: layout, enumerate: false, action: "back" }
+                : {
+                    type: "default",
+                    layout: layout,
+                    enumerate: false,
+                    action: "interaction:commit",
+                    data: { action: "zone:" + side }
+                };
+        };
+        return {
+            type: "pages",
+            cache: false,
+            transparent: 1,
+            pages: [{ items: [zone(layouts[0], -1), zone(layouts[1], 0), zone(layouts[2], 1)] }]
+        };
+    }
+
+    function handleZoneMessage(message) {
+        if (message === "zones:open") {
+            if (zones.visible) { return; }
+            zones.visible = true;
+            TVXInteractionPlugin.executeAction("player:content:" + request("zones"));
+        } else if (message === "zones:foreground") {
+            zones.visible = false;
+        } else if (message === "zones:background" && !zones.visible) {
+            TVXInteractionPlugin.executeAction("[player:eject|reload:content]");
+        }
+    }
+
+    function handleZoneTap(side) {
+        var now = Date.now();
+        var isDouble = side === zones.side && now - zones.time < ZONE_DOUBLE_MS;
+        zones.side = side;
+        zones.time = isDouble ? 0 : now;
+        if (isDouble) {
+            TVXInteractionPlugin.executeAction("player:seek:" + (side > 0 ? "+10" : "-10"));
+        }
     }
 
     function rotated() {
@@ -647,24 +708,31 @@
             header.push(favoriteButton(release, ids));
             header.push({
                 type: "button",
-                layout: "2,3,3,1",
+                layout: "2,3,2,1",
                 label: "{ico:high-quality} " + quality() + "p",
                 action: "interaction:commit",
                 data: { action: "quality" }
             });
             header.push({
                 type: "button",
-                layout: "5,3,3,1",
+                layout: "4,3,2,1",
                 label: "{ico:speed} " + speed() + "x",
                 action: "interaction:commit",
                 data: { action: "speed" }
             });
             header.push({
                 type: "button",
-                layout: "8,3,4,1",
+                layout: "6,3,3,1",
                 label: "{ico:screen-rotation} Поворот: " + (rotated() ? "вкл" : "выкл"),
                 action: "interaction:commit",
                 data: { action: "rotate" }
+            });
+            header.push({
+                type: "button",
+                layout: "9,3,3,1",
+                label: "{ico:touch-app} Касания: " + (zonesEnabled() ? "вкл" : "выкл"),
+                action: "interaction:commit",
+                data: { action: "zones" }
             });
             return {
                 type: "list",
@@ -790,9 +858,13 @@
 
     function Handler() {
         this.handleData = function (data) {
-            if (data && typeof data.message === "string" && data.message.indexOf("watch:") === 0) {
-                var parts = data.message.split(":");
-                markWatched(parts[1], parts[2], parts[3]);
+            if (data && typeof data.message === "string") {
+                if (data.message.indexOf("watch:") === 0) {
+                    var parts = data.message.split(":");
+                    markWatched(parts[1], parts[2], parts[3]);
+                } else if (data.message.indexOf("zones:") === 0) {
+                    handleZoneMessage(data.message);
+                }
                 return;
             }
             var action = data && data.data && data.data.action;
@@ -804,6 +876,11 @@
             } else if (action === "speed") {
                 storageSet(SPEED_KEY, SPEEDS[(SPEEDS.indexOf(speed()) + 1) % SPEEDS.length]);
                 TVXInteractionPlugin.executeAction("reload:content");
+            } else if (action === "zones") {
+                storageSet(ZONES_KEY, zonesEnabled() ? "off" : "on");
+                TVXInteractionPlugin.executeAction("reload:content");
+            } else if (action.indexOf("zone:") === 0) {
+                handleZoneTap(Number(action.slice(5)));
             } else if (action === "rotate") {
                 storageSet(ROTATE_KEY, rotated() ? "off" : "on");
                 TVXInteractionPlugin.executeAction("reload:content");
@@ -829,6 +906,8 @@
                 list(parts[1], Number(parts[2]) || 1, callback);
             } else if (parts[0] === "favorites") {
                 favorites(Number(parts[1]) || 1, callback);
+            } else if (dataId === "zones") {
+                callback(zonesContent());
             } else if (dataId === "history") {
                 callback(history());
             } else if (dataId === "account") {
