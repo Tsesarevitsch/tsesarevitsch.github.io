@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.9.3";
+    var VERSION = "1.9.4";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -20,6 +20,7 @@
     var ROTATE_KEY = "anilibria.rotate";
     var ZONES_KEY = "anilibria.zones";
     var ZONE_DOUBLE_MS = 450;
+    var ZONE_RETURN_MS = 10000; /* MSX hides the panel after 8 s without input */
     var ZONE_COLOR = "rgba(0, 0, 0, 0)";
     var SPEEDS = ["1", "1.25", "1.5", "1.75", "2"];
     var SPEED_KEY = "anilibria.speed";
@@ -46,7 +47,7 @@
     var pluginUrl = location.href.split(/[?#]/)[0];
     var playerUrl = pluginUrl.replace(/[^\/]*$/, "player.html");
     var hostIndex = 0;
-    var zones = { visible: false, side: null, time: 0, timer: null };
+    var zones = { visible: false, side: null, time: 0, timer: null, returnTimer: null };
     var search = { input: "", lang: "ru", results: null, error: null, timer: null, seq: 0 };
 
     /* ---------- helpers ---------- */
@@ -520,6 +521,7 @@
             properties["trigger:background"] = "interaction:commit:message:zones:background";
             properties["trigger:foreground"] = "interaction:commit:message:zones:foreground";
             properties["trigger:play"] = "interaction:commit:message:zones:open";
+            properties["trigger:stop"] = "interaction:commit:message:zones:stop";
             properties["button:content:icon"] = "touch-app";
             properties["button:content:action"] = "interaction:commit:message:zones:open";
         }
@@ -566,13 +568,18 @@
     }
 
     function handleZoneMessage(message) {
-        if (message === "zones:open") {
+        if (message === "zones:stop") {
+            clearTimeout(zones.returnTimer);
+            zones.visible = false;
+        } else if (message === "zones:open") {
+            clearTimeout(zones.returnTimer);
             if (zones.visible) { return; }
             zones.visible = true;
             TVXInteractionPlugin.executeAction("player:content:" + request("zones"));
         } else if (message === "zones:foreground") {
             zones.visible = false;
         } else if (message === "zones:background" && !zones.visible) {
+            clearTimeout(zones.returnTimer);
             TVXInteractionPlugin.executeAction("[player:eject|reload:content]");
         }
     }
@@ -594,9 +601,13 @@
     }
 
     /* "back" would leave for the title page; "playback" closes the zones and stays on the video.
-       The pause keeps the panel open, and resuming brings the zones back via trigger:play. */
+       The panel hides itself, so the zones come back on a timer. */
     function showPlayerPanel() {
-        TVXInteractionPlugin.executeAction("[player:pause|playback|player:show]");
+        clearTimeout(zones.returnTimer);
+        TVXInteractionPlugin.executeAction("[playback|player:show]");
+        zones.returnTimer = setTimeout(function () {
+            handleZoneMessage("zones:open");
+        }, ZONE_RETURN_MS);
     }
 
     function rotated() {
