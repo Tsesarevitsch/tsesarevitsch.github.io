@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.9.5";
+    var VERSION = "1.9.6";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -19,9 +19,9 @@
     var QUALITY_KEY = "anilibria.quality";
     var ROTATE_KEY = "anilibria.rotate";
     var ZONES_KEY = "anilibria.zones";
-    var ZONE_DOUBLE_MS = 450;
-    var ZONE_PANEL_SECONDS = "4"; /* double tap is unavailable while the panel is shown */
-    var ZONE_RETURN_MS = 4500;
+    var ZONE_DOUBLE_MS = 250; /* 100 ms is shorter than a real double tap */
+    var ZONE_PANEL_SECONDS = "2"; /* double tap is unavailable while the panel is shown */
+    var ZONE_RETURN_MS = 2100;
     var ZONE_COLOR = "rgba(0, 0, 0, 0)";
     var SPEEDS = ["1", "1.25", "1.5", "1.75", "2"];
     var SPEED_KEY = "anilibria.speed";
@@ -595,7 +595,9 @@
         if (side === 0) {
             showPlayerPanel();
         } else if (isDouble) {
-            TVXInteractionPlugin.executeAction("player:seek:" + (side > 0 ? "+10" : "-10"));
+            TVXInteractionPlugin.executeAction(
+                "[player:seek:" + (side > 0 ? "+10" : "-10") + "|player:commit:message:hint:" + side + "]"
+            );
         } else {
             /* A single edge tap waits for the double-tap window, which would skip instead. */
             zones.timer = setTimeout(showPlayerPanel, ZONE_DOUBLE_MS);

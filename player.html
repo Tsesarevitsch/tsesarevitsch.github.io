@@ -7,9 +7,9 @@
         html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
         video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
         #hint {
-            position: absolute; left: 50%; top: 50%; width: 120px; height: 44px; margin: -22px 0 0 -60px;
-            border-radius: 22px; background: rgba(0, 0, 0, .6); color: #fff;
-            font: 600 18px/44px -apple-system, sans-serif; text-align: center; display: none;
+            position: absolute; width: 140px; height: 56px; margin: -28px 0 0 -70px; border-radius: 28px;
+            background: rgba(0, 0, 0, .35); color: rgba(255, 255, 255, .9);
+            font: 600 24px/56px -apple-system, sans-serif; text-align: center; display: none;
         }
     </style>
     <script src="//msx.benzac.de/js/tvx-plugin.min.js"></script>
@@ -23,7 +23,7 @@
             "use strict";
 
             var SKIP_SECONDS = 10;
-            var DOUBLE_TAP_MS = 350;
+            var HINT_MS = 700;
 
             function param(name) {
                 var match = new RegExp("[?&]" + name + "=([^&]*)").exec(location.search);
@@ -46,31 +46,20 @@
                 hint.style.webkitTransform = transform;
             }
 
-            /* Double tap: left part of the picture back, right part forward. In portrait the
-               picture is turned clockwise, so its left edge is at the top of the screen.
-               MSX may keep touches to itself; then this simply never fires. */
-            function setupDoubleTap(video) {
+            /* Shown over the picture, on the side that was tapped. Portrait turns the picture
+               clockwise, so its left edge is at the top of the screen. */
+            var hideHintTimer = null;
+
+            function showHint(side) {
                 var hint = document.getElementById("hint");
-                var hideTimer = null;
-                var lastTime = 0;
-                var lastSide = 0;
-                document.addEventListener("touchend", function (event) {
-                    var touch = event.changedTouches && event.changedTouches[0];
-                    if (!touch) { return; }
-                    var portrait = window.innerHeight > window.innerWidth;
-                    var ratio = portrait ? touch.clientY / window.innerHeight : touch.clientX / window.innerWidth;
-                    var side = ratio < 0.4 ? -1 : (ratio > 0.6 ? 1 : 0);
-                    var now = Date.now();
-                    var isDouble = side !== 0 && side === lastSide && now - lastTime < DOUBLE_TAP_MS;
-                    lastTime = isDouble ? 0 : now;
-                    lastSide = side;
-                    if (!isDouble) { return; }
-                    video.currentTime = Math.max(0, video.currentTime + side * SKIP_SECONDS);
-                    hint.textContent = (side > 0 ? "+" : "−") + SKIP_SECONDS + " сек";
-                    hint.style.display = "block";
-                    clearTimeout(hideTimer);
-                    hideTimer = setTimeout(function () { hint.style.display = "none"; }, 700);
-                });
+                var portrait = window.innerHeight > window.innerWidth;
+                var offset = side > 0 ? "78%" : "22%";
+                hint.textContent = (side > 0 ? "+" : "−") + SKIP_SECONDS;
+                hint.style.left = portrait ? "50%" : offset;
+                hint.style.top = portrait ? offset : "50%";
+                hint.style.display = "block";
+                clearTimeout(hideHintTimer);
+                hideHintTimer = setTimeout(function () { hint.style.display = "none"; }, HINT_MS);
             }
 
             function Player() {
@@ -80,7 +69,6 @@
                 this.init = function () {
                     window.addEventListener("resize", refit);
                     refit();
-                    setupDoubleTap(video);
                     video.addEventListener("waiting", function () { TVXVideoPlugin.startLoading(); });
                     video.addEventListener("playing", function () { TVXVideoPlugin.stopLoading(); });
                     video.addEventListener("ended", function () { TVXVideoPlugin.stopPlayback(); });
@@ -118,6 +106,10 @@
                 this.getSpeed = function () { return video.playbackRate; };
                 this.setSpeed = function (speed) { video.playbackRate = speed; };
                 this.setSize = refit;
+                this.handleData = function (data) {
+                    var match = data && /^hint:(-?1)$/.exec(data.message || "");
+                    if (match) { showHint(Number(match[1])); }
+                };
                 this.getUpdateData = function () {
                     return {
                         position: this.getPosition(),
