@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.9.0";
+    var VERSION = "1.9.1";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -20,7 +20,8 @@
     var ROTATE_KEY = "anilibria.rotate";
     var ZONES_KEY = "anilibria.zones";
     var ZONE_DOUBLE_MS = 450;
-    var SPEEDS = ["1", "1.25", "1.5", "1.75", "2", "2.5", "3"];
+    var ZONE_COLOR = "rgba(0, 0, 0, 0)";
+    var SPEEDS = ["1", "1.25", "1.5", "1.75", "2"];
     var SPEED_KEY = "anilibria.speed";
     var TOKEN_KEY = "anilibria.token";
     var DEVICE_KEY = "anilibria.device";
@@ -535,21 +536,31 @@
         var rows = rotated() && window.innerHeight > window.innerWidth;
         var layouts = rows ? ["0,0,12,2", "0,2,12,2", "0,4,12,2"] : ["0,0,4,6", "4,0,4,6", "8,0,4,6"];
         var zone = function (layout, side) {
-            return side === 0
-                ? { type: "default", layout: layout, enumerate: false, action: "back" }
-                : {
-                    type: "default",
-                    layout: layout,
-                    enumerate: false,
-                    action: "interaction:commit",
-                    data: { action: "zone:" + side }
-                };
+            var item = { type: "default", layout: layout, color: ZONE_COLOR, enumerate: false };
+            if (side === 0) {
+                item.action = "back";
+            } else {
+                /* The focus frame cannot be hidden, so it is sent to a tiny item after each tap. */
+                item.action = "[focus:zone_park|interaction:commit]";
+                item.data = { action: "zone:" + side };
+            }
+            return item;
+        };
+        var park = {
+            id: "zone_park",
+            type: "default",
+            layout: "11,5,1,1",
+            offset: "0.98,0.98,-0.98,-0.98",
+            color: ZONE_COLOR,
+            enumerate: false,
+            focus: true,
+            action: "[]"
         };
         return {
             type: "pages",
             cache: false,
             transparent: 1,
-            pages: [{ items: [zone(layouts[0], -1), zone(layouts[1], 0), zone(layouts[2], 1)] }]
+            pages: [{ items: [zone(layouts[0], -1), zone(layouts[1], 0), zone(layouts[2], 1), park] }]
         };
     }
 
