@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "2.0.0";
+    var VERSION = "2.0.1";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -783,7 +783,9 @@
             type: "pages",
             cache: false,
             transparent: 1,
-            pages: [{ items: [zone(layouts[0], -1), zone(layouts[1], 0), zone(layouts[2], 1), park] }]
+            /* Inline data ignores item focus, so the tiny item goes first and takes it explicitly. */
+            ready: { action: "focus:zone_park" },
+            pages: [{ items: [park, zone(layouts[0], -1), zone(layouts[1], 0), zone(layouts[2], 1)] }]
         };
     }
 
