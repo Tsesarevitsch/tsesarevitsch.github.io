@@ -6,7 +6,7 @@
        e.g. "https://anilibria.example.workers.dev". */
     var PROXY = "";
 
-    var VERSION = "1.9.6";
+    var VERSION = "2.0.0";
 
     var SITE = "https://aniliberty.top";
     var HOSTS = (PROXY ? [PROXY.replace(/\/+$/, "")] : []).concat([SITE, "https://anilibria.top"]);
@@ -21,7 +21,11 @@
     var ZONES_KEY = "anilibria.zones";
     var ZONE_DOUBLE_MS = 250; /* 100 ms is shorter than a real double tap */
     var ZONE_PANEL_SECONDS = "2"; /* double tap is unavailable while the panel is shown */
-    var ZONE_RETURN_MS = 2100;
+    var ZONE_RETURN_MS = 2000;
+    var ZONE_PRESS_MS = 1200; /* the panel closes this long after a press on its buttons */
+    var ZONE_SPEED_MS = 15000; /* the speed list needs more time than the panel */
+    var ZONE_STREAK_MS = 900; /* after a double tap, single taps on that side keep skipping */
+    var INTRO_SECONDS = 85;
     var ZONE_COLOR = "rgba(0, 0, 0, 0)";
     var SPEEDS = ["1", "1.25", "1.5", "1.75", "2"];
     var SPEED_KEY = "anilibria.speed";
@@ -30,6 +34,17 @@
     var HISTORY_KEY = "anilibria.history";
     var HISTORY_SIZE = 60;
     var FAVORITES_PATH = "/accounts/users/me/favorites";
+    var FILTERS = [
+        { key: "genres", label: "Жанры", ref: "genres", multi: true, value: "id", text: "name" },
+        { key: "types", label: "Тип", ref: "types", multi: true, value: "value", text: "description" },
+        { key: "seasons", label: "Сезон", ref: "seasons", multi: true, value: "value", text: "description" },
+        { key: "from_year", label: "Год от", ref: "years" },
+        { key: "to_year", label: "Год до", ref: "years" },
+        { key: "age_ratings", label: "Возраст", ref: "age-ratings", multi: true, value: "value", text: "label" },
+        { key: "publish_statuses", label: "Выход", ref: "publish-statuses", multi: true, value: "value", text: "description" },
+        { key: "production_statuses", label: "Озвучка", ref: "production-statuses", multi: true, value: "value", text: "description" },
+        { key: "sorting", label: "Сортировка", ref: "sorting", value: "value", text: "label" }
+    ];
     var SECTIONS = {
         fresh: { label: "Новинки", query: "f[sorting]=FRESH_AT_DESC" },
         top: { label: "Популярное", query: "f[sorting]=RATING_DESC" },
@@ -48,7 +63,11 @@
     var pluginUrl = location.href.split(/[?#]/)[0];
     var playerUrl = pluginUrl.replace(/[^\/]*$/, "player.html");
     var hostIndex = 0;
-    var zones = { visible: false, side: null, time: 0, timer: null, returnTimer: null };
+    var zones = {
+        visible: false, side: null, time: 0, timer: null, returnTimer: null, streakSide: 0, streakUntil: 0
+    };
+    var filter = {};
+    var references = {};
     var search = { input: "", lang: "ru", results: null, error: null, timer: null, seq: 0 };
 
     /* ---------- helpers ---------- */
@@ -243,6 +262,7 @@
                 data: request("list:" + id + ":1")
             });
         }
+        items.push({ icon: "tune", label: "Каталог", data: request("catalog") });
         items.push({ icon: "star", label: "Избранное", data: request("favorites:1") });
         items.push({ icon: "history", label: "История", data: request("history") });
         items.push({ icon: "event", label: "Расписание", data: request("schedule") });
@@ -337,22 +357,206 @@
         };
     }
 
+    function pagerItem(data, nextDataId, page) {
+        var pagination = (data.meta && data.meta.pagination) || {};
+        return pagination.current_page < pagination.total_pages ? {
+            type: "button",
+            icon: "arrow-forward",
+            label: "Страница " + (page + 1),
+            action: open(nextDataId + ":" + (page + 1))
+        } : null;
+    }
+
+    function optionValue(definition, option) {
+        return String(definition.value ? option[definition.value] : option);
+    }
+
+    function optionText(definition, option) {
+        return String(definition.text ? option[definition.text] : option);
+    }
+
+    function selected(definition) {
+        var value = filter[definition.key];
+        if (definition.multi) { return value || []; }
+        return value ? [value] : [];
+    }
+
+    function filterSummary(definition) {
+        var values = selected(definition);
+        var options = references[definition.ref];
+        if (values.length === 0) { return "Любой"; }
+        if (!options || values.length > 2) { return "Выбрано: " + values.length; }
+        return options.filter(function (option) {
+            return values.indexOf(optionValue(definition, option)) >= 0;
+        }).map(function (option) { return optionText(definition, option); }).join(", ");
+    }
+
+    function catalog() {
+        var items = [
+            { icon: "search", label: "Показать результаты", action: open("results:1") },
+            { icon: "clear", label: "Сбросить фильтры", action: "interaction:commit", data: { action: "filter:reset" } }
+        ];
+        FILTERS.forEach(function (definition) {
+            items.push({
+                label: definition.label,
+                extensionLabel: filterSummary(definition),
+                action: "panel:" + request("filter:" + definition.key)
+            });
+        });
+        return {
+            type: "list",
+            cache: false,
+            headline: "Каталог",
+            template: { type: "control", layout: "0,0,6,1", enumerate: false },
+            items: items
+        };
+    }
+
+    function filterDefinition(key) {
+        return FILTERS.filter(function (definition) { return definition.key === key; })[0];
+    }
+
+    function filterPanel(key, callback) {
+        var definition = filterDefinition(key);
+        var build = function (options) {
+            var values = selected(definition);
+            var items = options.map(function (option, index) {
+                var value = optionValue(definition, option);
+                return {
+                    id: "option" + index,
+                    label: optionText(definition, option),
+                    extensionIcon: values.indexOf(value) >= 0 ? "check" : "blank",
+                    action: "interaction:commit",
+                    data: { action: "filter:set:" + key + ":" + value }
+                };
+            });
+            if (!definition.multi) {
+                items.unshift({
+                    id: "option_any",
+                    label: "Любой",
+                    extensionIcon: values.length === 0 ? "check" : "blank",
+                    action: "interaction:commit",
+                    data: { action: "filter:set:" + key + ":" }
+                });
+            }
+            callback({
+                type: "list",
+                cache: false,
+                flag: "anilibria_filter_" + key,
+                refocus: 1,
+                headline: definition.label,
+                template: { type: "control", layout: "0,0,8,1", enumerate: false },
+                items: items
+            });
+        };
+        if (references[definition.ref]) {
+            build(references[definition.ref]);
+            return;
+        }
+        get("/anime/catalog/references/" + definition.ref, function (options) {
+            references[definition.ref] = options;
+            build(options);
+        }, function (message) {
+            callback(errorContent(definition.label, message));
+        });
+    }
+
+    function handleFilterAction(action) {
+        if (action === "filter:reset") {
+            filter = {};
+            TVXInteractionPlugin.executeAction("reload:content");
+            return;
+        }
+        var parts = action.split(":");
+        var definition = filterDefinition(parts[2]);
+        var value = parts[3];
+        if (definition.multi) {
+            var values = selected(definition).slice();
+            var index = values.indexOf(value);
+            if (index >= 0) { values.splice(index, 1); } else { values.push(value); }
+            filter[definition.key] = values;
+            TVXInteractionPlugin.executeAction("[reload:panel|reload:content]");
+        } else {
+            filter[definition.key] = value;
+            TVXInteractionPlugin.executeAction("[back|reload:content]");
+        }
+    }
+
+    function filterQuery() {
+        var query = [];
+        ["genres", "types", "seasons", "age_ratings", "publish_statuses", "production_statuses"].forEach(function (key) {
+            if (filter[key] && filter[key].length > 0) { query.push("f[" + key + "]=" + filter[key].join(",")); }
+        });
+        if (filter.from_year) { query.push("f[years][from_year]=" + filter.from_year); }
+        if (filter.to_year) { query.push("f[years][to_year]=" + filter.to_year); }
+        if (filter.sorting) { query.push("f[sorting]=" + filter.sorting); }
+        return query.concat(["limit=" + PAGE_SIZE]);
+    }
+
+    function results(page, callback) {
+        var query = filterQuery().concat(["page=" + page]).join("&");
+        get(encodeBrackets("/anime/catalog/releases?" + query), function (data) {
+            var pagination = (data.meta && data.meta.pagination) || {};
+            var items = (data.data || []).map(function (release) { return posterItem(release); });
+            var pager = pagerItem(data, "results", page);
+            if (pager) { items.push(pager); }
+            callback({
+                type: "list",
+                cache: false,
+                headline: "Результаты" + (pagination.total ? ": " + pagination.total : ""),
+                template: posterTemplate(),
+                items: items.length > 0 ? items : [hintItem("Ничего не найдено, ослабь фильтры")]
+            });
+        }, function (message) {
+            callback(errorContent("Результаты", message));
+        });
+    }
+
+    /* Other seasons, films and so on of the same franchise, in franchise order. */
+    function relatedReleases(id, done) {
+        get("/anime/franchises/release/" + encodeURIComponent(id), function (franchises) {
+            var seen = {};
+            var releases = [];
+            (franchises || []).forEach(function (franchise) {
+                (franchise.franchise_releases || []).slice().sort(function (a, b) {
+                    return a.sort_order - b.sort_order;
+                }).forEach(function (link) {
+                    if (link.release && !seen[link.release.id]) {
+                        seen[link.release.id] = true;
+                        releases.push(link.release);
+                    }
+                });
+            });
+            done(releases.length > 1 ? releases : []);
+        }, function () {
+            done([]);
+        });
+    }
+
+    function related(id, callback) {
+        relatedReleases(id, function (releases) {
+            callback({
+                type: "list",
+                cache: false,
+                headline: "Связанные тайтлы",
+                template: posterTemplate(),
+                items: releases.length > 0 ? releases.map(function (release) {
+                    return posterItem(release, String(release.id) === String(id)
+                        ? { badge: "Этот тайтл", badgeColor: "msx-red" } : null);
+                }) : [hintItem("Связанных тайтлов нет")]
+            });
+        });
+    }
+
     function favorites(page, callback) {
         if (!token()) {
             callback(loginContent("Избранное", "Избранное доступно после входа"));
             return;
         }
         send("GET", FAVORITES_PATH + "/releases?limit=" + PAGE_SIZE + "&page=" + page, { auth: true }, function (data) {
-            var pagination = (data.meta && data.meta.pagination) || {};
             var items = (data.data || []).map(function (release) { return posterItem(release); });
-            if (pagination.current_page < pagination.total_pages) {
-                items.push({
-                    type: "button",
-                    icon: "arrow-forward",
-                    label: "Страница " + (page + 1),
-                    action: open("favorites:" + (page + 1))
-                });
-            }
+            var pager = pagerItem(data, "favorites", page);
+            if (pager) { items.push(pager); }
             callback({
                 type: "list",
                 cache: false,
@@ -513,9 +717,11 @@
             "trigger:background": "[player:eject|reload:content]",
             "resume:key": "id", /* eject must not lose the position */
             "button:rewind:icon": "replay-10",
-            "button:rewind:action": "player:seek:-10",
+            "button:rewind:action": skipAction(-1, 10, true),
             "button:forward:icon": "forward-10",
-            "button:forward:action": "player:seek:+10"
+            "button:forward:action": skipAction(1, 10, true),
+            "button:restart:icon": "fast-forward",
+            "button:restart:action": skipAction(1, INTRO_SECONDS, true)
         };
         if (zonesEnabled()) {
             onStart.push("interaction:commit:message:zones:open");
@@ -524,11 +730,23 @@
             properties["trigger:play"] = "interaction:commit:message:zones:open";
             properties["trigger:stop"] = "interaction:commit:message:zones:stop";
             properties["control:timeout"] = ZONE_PANEL_SECONDS;
+            properties["trigger:pause"] = "interaction:commit:message:zones:pressed";
+            properties["button:speed:icon"] = "speed";
+            properties["button:speed:action"] = "[player:speed|interaction:commit:message:zones:speed]";
             properties["button:content:icon"] = "touch-app";
             properties["button:content:action"] = "interaction:commit:message:zones:open";
         }
         properties["trigger:start"] = "[" + onStart.join("|") + "]";
         return properties;
+    }
+
+    function skipAction(side, seconds, pressed) {
+        var actions = [
+            "player:seek:" + (side > 0 ? "+" : "-") + seconds,
+            "player:commit:message:hint:" + side + ":" + seconds
+        ];
+        if (pressed) { actions.push("interaction:commit:message:zones:pressed"); }
+        return "[" + actions.join("|") + "]";
     }
 
     function zonesEnabled() {
@@ -569,15 +787,27 @@
         };
     }
 
+    function returnZonesAfter(delay) {
+        clearTimeout(zones.returnTimer);
+        zones.returnTimer = setTimeout(function () {
+            handleZoneMessage("zones:open");
+        }, delay);
+    }
+
     function handleZoneMessage(message) {
-        if (message === "zones:stop") {
+        if (message === "zones:pressed" || message === "zones:speed") {
+            if (zonesEnabled() && !zones.visible) {
+                returnZonesAfter(message === "zones:speed" ? ZONE_SPEED_MS : ZONE_PRESS_MS);
+            }
+        } else if (message === "zones:stop") {
             clearTimeout(zones.returnTimer);
             zones.visible = false;
         } else if (message === "zones:open") {
             clearTimeout(zones.returnTimer);
             if (zones.visible) { return; }
             zones.visible = true;
-            TVXInteractionPlugin.executeAction("player:content:" + request("zones"));
+            /* Inline data: no request round trip, so the zones are usable at once. */
+            TVXInteractionPlugin.executeAction("player:content:data", zonesContent());
         } else if (message === "zones:foreground") {
             zones.visible = false;
         } else if (message === "zones:background" && !zones.visible) {
@@ -589,15 +819,18 @@
     function handleZoneTap(side) {
         var now = Date.now();
         var isDouble = side === zones.side && now - zones.time < ZONE_DOUBLE_MS;
+        var inStreak = side !== 0 && side === zones.streakSide && now < zones.streakUntil;
         zones.side = side;
         zones.time = isDouble ? 0 : now;
         clearTimeout(zones.timer);
         if (side === 0) {
+            zones.streakSide = 0;
             showPlayerPanel();
-        } else if (isDouble) {
-            TVXInteractionPlugin.executeAction(
-                "[player:seek:" + (side > 0 ? "+10" : "-10") + "|player:commit:message:hint:" + side + "]"
-            );
+        } else if (isDouble || inStreak) {
+            zones.streakSide = side;
+            zones.streakUntil = now + ZONE_STREAK_MS;
+            zones.time = 0;
+            TVXInteractionPlugin.executeAction(skipAction(side, 10, false));
         } else {
             /* A single edge tap waits for the double-tap window, which would skip instead. */
             zones.timer = setTimeout(showPlayerPanel, ZONE_DOUBLE_MS);
@@ -607,11 +840,8 @@
     /* "back" would leave for the title page; "playback" closes the zones and stays on the video.
        The panel hides itself, so the zones come back on a timer. */
     function showPlayerPanel() {
-        clearTimeout(zones.returnTimer);
         TVXInteractionPlugin.executeAction("[playback|player:show]");
-        zones.returnTimer = setTimeout(function () {
-            handleZoneMessage("zones:open");
-        }, ZONE_RETURN_MS);
+        returnZonesAfter(ZONE_RETURN_MS);
     }
 
     function rotated() {
@@ -664,8 +894,8 @@
         };
     }
 
-    function favoriteButton(release, ids) {
-        var button = { type: "button", layout: "7,2,5,1", label: "{ico:star-border} В избранное" };
+    function favoriteButton(release, ids, layout) {
+        var button = { type: "button", layout: layout, label: "{ico:star-border} В избранное" };
         if (!token()) {
             button.action = open("account");
         } else if (ids.indexOf(release.id) >= 0) {
@@ -695,13 +925,17 @@
     function title(id, callback) {
         get("/anime/releases/" + encodeURIComponent(id), function (release) {
             remember(release);
-            withFavoriteIds(function (ids) { callback(titleContent(release, ids)); });
+            withFavoriteIds(function (ids) {
+                relatedReleases(release.id, function (linked) {
+                    callback(titleContent(release, ids, linked));
+                });
+            });
         }, function (message) {
             callback(errorContent("AniLibria", message));
         });
     }
 
-    function titleContent(release, ids) {
+    function titleContent(release, ids, linked) {
             var items = episodeItems(release);
             var entry = historyEntry(release.id);
             var lastIndex = -1;
@@ -728,7 +962,7 @@
             if (items.length > 0) {
                 header.push({
                     type: "button",
-                    layout: "2,2,5,1",
+                    layout: linked.length > 0 ? "2,2,4,1" : "2,2,5,1",
                     label: lastIndex >= 0
                         ? "{ico:play-arrow} Продолжить: " + entry.last.ordinal + " серия"
                         : "{ico:play-arrow} Смотреть",
@@ -738,13 +972,21 @@
             } else {
                 header.push({
                     type: "button",
-                    layout: "2,2,5,1",
+                    layout: linked.length > 0 ? "2,2,4,1" : "2,2,5,1",
                     label: release.is_blocked_by_geo || release.is_blocked_by_copyrights
                         ? "{ico:warning} Заблокировано" : "{ico:warning} Серий нет",
                     enable: false
                 });
             }
-            header.push(favoriteButton(release, ids));
+            header.push(favoriteButton(release, ids, linked.length > 0 ? "6,2,3,1" : "7,2,5,1"));
+            if (linked.length > 0) {
+                header.push({
+                    type: "button",
+                    layout: "9,2,3,1",
+                    label: "{ico:link} Связанные: " + linked.length,
+                    action: open("related:" + release.id)
+                });
+            }
             header.push({
                 type: "button",
                 layout: "2,3,2,1",
@@ -918,6 +1160,8 @@
             } else if (action === "zones") {
                 storageSet(ZONES_KEY, zonesEnabled() ? "off" : "on");
                 TVXInteractionPlugin.executeAction("reload:content");
+            } else if (action.indexOf("filter:") === 0) {
+                handleFilterAction(action);
             } else if (action.indexOf("zone:") === 0) {
                 handleZoneTap(Number(action.slice(5)));
             } else if (action === "rotate") {
@@ -945,8 +1189,14 @@
                 list(parts[1], Number(parts[2]) || 1, callback);
             } else if (parts[0] === "favorites") {
                 favorites(Number(parts[1]) || 1, callback);
-            } else if (dataId === "zones") {
-                callback(zonesContent());
+            } else if (dataId === "catalog") {
+                callback(catalog());
+            } else if (parts[0] === "filter") {
+                filterPanel(parts[1], callback);
+            } else if (parts[0] === "results") {
+                results(Number(parts[1]) || 1, callback);
+            } else if (parts[0] === "related") {
+                related(parts[1], callback);
             } else if (dataId === "history") {
                 callback(history());
             } else if (dataId === "account") {

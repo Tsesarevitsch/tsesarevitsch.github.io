@@ -7,7 +7,7 @@
         html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
         video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
         #hint {
-            position: absolute; width: 140px; height: 56px; margin: -28px 0 0 -70px; border-radius: 28px;
+            position: absolute; width: 180px; height: 56px; margin: -28px 0 0 -90px; border-radius: 28px;
             background: rgba(0, 0, 0, .35); color: rgba(255, 255, 255, .9);
             font: 600 24px/56px -apple-system, sans-serif; text-align: center; display: none;
         }
@@ -22,8 +22,7 @@
         (function () {
             "use strict";
 
-            var SKIP_SECONDS = 10;
-            var HINT_MS = 700;
+            var HINT_MS = 1000;
 
             function param(name) {
                 var match = new RegExp("[?&]" + name + "=([^&]*)").exec(location.search);
@@ -49,17 +48,24 @@
             /* Shown over the picture, on the side that was tapped. Portrait turns the picture
                clockwise, so its left edge is at the top of the screen. */
             var hideHintTimer = null;
+            var hintSide = 0;
+            var hintTotal = 0;
 
-            function showHint(side) {
+            function showHint(side, seconds) {
                 var hint = document.getElementById("hint");
                 var portrait = window.innerHeight > window.innerWidth;
                 var offset = side > 0 ? "78%" : "22%";
-                hint.textContent = (side > 0 ? "+" : "−") + SKIP_SECONDS;
+                hintTotal = side === hintSide ? hintTotal + seconds : seconds;
+                hintSide = side;
+                hint.textContent = (side > 0 ? "+" : "−") + hintTotal + " сек";
                 hint.style.left = portrait ? "50%" : offset;
                 hint.style.top = portrait ? offset : "50%";
                 hint.style.display = "block";
                 clearTimeout(hideHintTimer);
-                hideHintTimer = setTimeout(function () { hint.style.display = "none"; }, HINT_MS);
+                hideHintTimer = setTimeout(function () {
+                    hint.style.display = "none";
+                    hintSide = 0;
+                }, HINT_MS);
             }
 
             function Player() {
@@ -107,8 +113,8 @@
                 this.setSpeed = function (speed) { video.playbackRate = speed; };
                 this.setSize = refit;
                 this.handleData = function (data) {
-                    var match = data && /^hint:(-?1)$/.exec(data.message || "");
-                    if (match) { showHint(Number(match[1])); }
+                    var match = data && /^hint:(-?1):(\d+)$/.exec(data.message || "");
+                    if (match) { showHint(Number(match[1]), Number(match[2])); }
                 };
                 this.getUpdateData = function () {
                     return {
